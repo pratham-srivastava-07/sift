@@ -8,6 +8,7 @@ export type RetrievedPage = {
   title?: string;
   heading?: string;
   content: string;
+  focusedContent?: string;
   links: { url: string; text: string }[];
 };
 

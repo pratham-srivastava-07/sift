@@ -77,30 +77,34 @@ export function createExtractionModel(apiKey: string, signal?: AbortSignal, tran
 
     async extract(page: RetrievedPage, missing: readonly string[], plan: FieldPlan, prompt: string, context?: ExtractionContext): Promise<ExtractedFields> {
       const found: ExtractedFields = Object.fromEntries(missing.map((name) => [name, null]));
-      for (const chunk of contentChunks(page.content)) {
+      const chunks = [...new Set([
+        ...(page.focusedContent ? contentChunks(page.focusedContent) : []),
+        ...contentChunks(page.content),
+      ])];
+      for (const chunk of chunks) {
         const remaining = missing.filter((name) => found[name] === null);
         if (!remaining.length) break;
         const schema = z.object(Object.fromEntries(remaining.map((name) => [name,
           z.object({
             value: modelValueSchema.describe("The extracted value as a JSON string, number, boolean, array, or object; null if missing. Return the value directly, not JSON encoded inside a string."),
-            evidence: z.string().nullable().describe("An exact quote from the supplied content supporting this value and its target entity, or null if missing."),
+            evidence: z.array(z.string().min(1)).describe("Separate exact quotes copied from this chunk. Use multiple quotes for a synthesized description. Never join passages with ellipses, rewrite punctuation, or normalize prices. Include product and offer context for a price. Empty array if missing."),
           }).strict(),
         ]))).strict();
         const answer = await complete(schema, "page_fields",
-          "Extract only the requested missing fields from this content chunk. 'This product' or 'this item' always refers to the entity on the starting page identified by targetContext, even on followed pages. Never substitute recommendations, accessories, bundles, or other variants. Missing, ambiguous, or unsupported values must be null. Each non-null value requires an exact supporting quote from this chunk. A description must describe the entity itself, not navigation, a section label, a site tagline, or generic metadata such as 'Home Page'. For product descriptions, synthesize a substantive paragraph of 3-5 sentences from feature bullets, product details, and specifications when available. Include supported capabilities, compatibility, design, and package exclusions; do not pad or invent details. Preserve the offered price and currency exactly; unavailable offers must stay null even if other products have prices. Return values directly: text as strings, numbers as numbers, and arrays or objects when requested. Do not JSON encode values inside strings. Do not treat a challenge/login/error page as the requested content.",
+          "Extract only the requested missing fields from this content chunk. 'This product' or 'this item' refers to the entity on the starting page identified by targetContext. Never substitute recommendations, accessories, bundles, or other variants. Missing, ambiguous, or unsupported values must be null with an empty evidence array. Each non-null value requires an array of exact supporting quotes from this chunk. Copy separate passages into separate array entries; never insert ellipses or rewrite source quotes. Include the product identity and selected-offer context in price evidence. A description must describe the entity itself, not navigation, section labels, generic metadata, or customer opinions. For product descriptions, synthesize 3-5 substantive sentences from the supplied features and specifications, with quotes supporting every claim. Do not invent or pad details. For prices, preserve the displayed amount AND currency as a string unless a numeric output is explicitly requested. Prefer the current selected purchase price, not the crossed-out list price, exchange discount, monthly installment, or an accessory. Unavailable offers stay null. Fields in a Product/Offer structured record belong to that record's product; do not confuse separate products. Return values directly, without JSON encoding inside strings. Do not treat a challenge/login/error page as requested content.",
           { prompt, targetContext: context, pageUrl: page.url, pageTitle: page.title, knownFields: { ...context?.knownFields, ...found }, fields: plan.filter((field) => remaining.includes(field.name)), content: chunk });
         const supported: typeof answer = {};
         for (const name of remaining) {
           const candidate = answer[name];
-          if (candidate.value === null || !candidate.evidence?.trim()) continue;
-          if (!normalizeEvidence(chunk).includes(normalizeEvidence(candidate.evidence))) continue;
+          if (candidate.value === null || !candidate.evidence.length) continue;
+          if (!candidate.evidence.every(quote => normalizeEvidence(quote) && normalizeEvidence(chunk).includes(normalizeEvidence(quote)))) continue;
           supported[name] = candidate;
         }
         const candidates = Object.keys(supported);
         if (candidates.length) {
           const reviewSchema = z.object(Object.fromEntries(candidates.map((name) => [name, z.boolean()]))).strict();
           const approved = await complete(reviewSchema, "field_support",
-            "Check whether each candidate actually answers the requested field for the target entity. Return false for any unrelated item, navigation/section label, generic site description, or value whose evidence merely occurs on the page without supporting its meaning. Product descriptions must contain substantive product features rather than labels like 'Home Page'. Price must belong to the selected product and offer, not a recommendation or bundle. All claims in a synthesized description must be supported by supplied content. Starting-page context identifies the target; it is not evidence for new values. Return true only when the field meaning, entity, and evidence all match.",
+            "Check whether each candidate answers the requested field for the target entity using its array of exact source quotes and supplied content. Multiple quotes jointly support a synthesized description; they need not form one continuous passage. Return false for unrelated items, navigation labels, customer opinions presented as specifications, or unsupported claims. Price must belong to the selected product and current offer, not a recommendation, installment, list price, or exchange discount. Numerically equivalent amounts with different thousands separators are equivalent; a selected-offer section under the selected product identifies that offer's owner. Starting-page context identifies the target but does not supply missing facts. Return true when the field meaning, entity, and evidence match.",
             { prompt, targetContext: context, pageUrl: page.url, fields: plan.filter((field) => candidates.includes(field.name)), candidates: supported, content: chunk });
           for (const name of candidates) {
             if (approved[name]) found[name] = z.json().parse(supported[name].value);

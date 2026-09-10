@@ -72,13 +72,33 @@ export async function createPageRetriever(boundary: BrowserBoundary, signal?: Ab
           const links = [...document.querySelectorAll<HTMLAnchorElement>("a[href]")]
             .map((anchor) => ({ url: anchor.href, text: (anchor.innerText || anchor.getAttribute("aria-label") || anchor.title).replace(/\s+/g, " ").trim() }));
           const text = document.body?.innerText ?? "";
+          // Keep source sections together so offers retain product/variant context.
+          // The complete rendered page remains available as a fallback.
+          const read = (selector: string) => [...document.querySelectorAll<HTMLElement>(selector)]
+            .map(element => element.innerText?.trim() || element.textContent?.trim() || "")
+            .filter(Boolean).join("\n");
+          const productTitle = read("#productTitle");
+          const amazonProduct = /(^|\.)amazon\.(in|com)$/.test(location.hostname) && !!productTitle;
+          const sections = amazonProduct ? [
+            `Selected product: ${productTitle}`,
+            `Selected offer (not recommendations):\n${read('#corePriceDisplay_desktop_feature_div, #corePrice_feature_div, #apex_desktop, #availability')}`,
+            `Product features:\n${read('#feature-bullets')}`,
+            `Product specifications:\n${read('#productOverview_feature_div, #productDetails_techSpec_section_1, #productDetails_detailBullets_sections1')}`,
+            `Product description:\n${read('#productDescription')}`,
+          ] : [
+            `Title: ${document.title}`,
+            ...metadata,
+            `Structured page data:\n${structured.join('\n')}`,
+            `Main content:\n${read('main, [role="main"], article, [itemtype="https://schema.org/Product"], [itemtype="http://schema.org/Product"]')}`,
+          ];
+          const focusedContent = sections.join("\n\n").replace(/[\t ]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
           const content = [
             `Title: ${document.title}`,
             ...metadata,
             "Rendered page text:", text,
             "Structured page data:", ...structured,
           ].join("\n").replace(/[\t ]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
-          return { url: location.href, title: document.title, heading: document.querySelector("h1")?.innerText.trim() ?? "", content, links };
+          return { url: location.href, title: document.title, heading: document.querySelector("h1")?.innerText.trim() ?? "", content, focusedContent, links };
         });
       } catch (error) {
         if (boundaryError) throw boundaryError;

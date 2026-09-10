@@ -15,6 +15,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Sift | Extract facts from the web",
   description: "Ask any public webpage for the fields you need.",
+  icons: {
+    icon: { url: "/sift-icon.svg", type: "image/svg+xml" },
+    shortcut: "/sift-icon.svg",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

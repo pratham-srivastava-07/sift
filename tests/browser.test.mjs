@@ -10,7 +10,7 @@ test("Puppeteer retrieves rendered text, metadata, structured data, and absolute
     response.end(`<!doctype html><html><head><title>Test product</title>
       <meta name="description" content="A fixture product">
       <script type="application/ld+json">{"price":"20.00"}</script></head>
-      <body><div id="price"></div><a href="/details">Product details</a>
+      <body><nav>Unrelated navigation</nav><main><div id="price"></div></main><a href="/details">Product details</a>
       <script>document.getElementById('price').textContent = 'Price: $20';</script>
       </body></html>`);
   });
@@ -27,6 +27,10 @@ test("Puppeteer retrieves rendered text, metadata, structured data, and absolute
     assert.match(page.content, /Price: \$20/);
     assert.match(page.content, /A fixture product/);
     assert.match(page.content, /"price":"20.00"/);
+    assert.match(page.focusedContent, /Price: \$20/);
+    assert.match(page.focusedContent, /"price":"20.00"/);
+    assert.doesNotMatch(page.focusedContent, /Unrelated navigation/);
+    assert.match(page.content, /Unrelated navigation/);
     assert.deepEqual(page.links, [{ url: `${origin}/details`, text: "Product details" }]);
     assert.doesNotMatch(page.content, /getElementById/);
   } finally {

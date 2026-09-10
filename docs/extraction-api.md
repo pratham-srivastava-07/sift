@@ -20,7 +20,7 @@ control, verifies the confirmation, then reads the selected product offer.
 
 Run `npm run dev` with `INTERFAZE_API_KEY` set in `.env` or `.env.local`.
 Puppeteer and its Chrome browser are installed by `npm install`.
-No client-side key is required. The starter UI has not been changed.
+No client-side key is required. The Sift UI uses this general endpoint.
 
 ## Request
 
@@ -50,16 +50,22 @@ include field issues.
 ## Flow
 
 1. Validate URL and prompt with Zod on the server.
-2. Ask Interfaze to identify requested fields and their target entity.
+2. Ask Interfaze to identify requested fields and their target entity while
+   loading the initial page in parallel.
 3. Retrieve the page with Puppeteer, including client-rendered text, metadata,
    JSON-LD, and anchor links. Scripts and styling are not sent to the model.
-4. Extract from overlapping 12,000-character chunks. Every chunk remains
-   available; later chunks are skipped when all fields have been found.
-5. Require each non-null model value to have an exact supporting quote in the
+4. Prioritize metadata, structured data, and semantic main-content sections.
+   Amazon product pages instead prioritize the selected product, offer, features,
+   and specifications. Extract from overlapping 12,000-character chunks. The
+   full rendered page remains a fallback for unresolved fields; later chunks are
+   skipped when all fields have been found.
+5. Require each non-null model value to have an array of exact supporting quotes in the
    supplied content. Review candidates for field meaning and target-entity
    relevance before accepting them. Validate the JSON value and requested field
    set with Zod. Product descriptions use a substantive paragraph from supported
    features and specifications rather than navigation or generic page labels.
+   Separate passages use separate quotes, allowing synthesis without fabricating
+   one continuous source passage. Prices retain their displayed currency.
 6. If fields are missing, rank discovered same-hostname links by relevance and
    visit the next candidate. Preserve the starting URL, title, heading, and found
    fields as target context across chunks and followed pages. Stop at five pages total, when
@@ -75,10 +81,9 @@ five seconds for network activity to settle.
 ## Current limits
 
 - The crawl compares exact hostnames; subdomains are not traversed. HTTP/HTTPS
-  transitions on that hostname are allowed. Public/private destination policy
-  is not implemented pending the user's decision. This endpoint can reach local
-  network destinations and has no authentication or rate limiting: do not expose
-  it to untrusted callers.
+  transitions on that hostname are allowed. Private and local network destinations
+  are rejected. The general extraction endpoint has no user authentication; deploy
+  it behind an application gateway if it is exposed publicly.
 - Retrieval/model failures return an error rather than a successful partial
   result. Missing fields on successfully processed pages return null.
 - No CAPTCHA solving, login workflow, infinite-scroll interaction, PDF parsing,
@@ -101,8 +106,10 @@ five seconds for network activity to settle.
 - For local PostgreSQL, run `docker compose up -d postgres`, keep
   `DATABASE_URL=postgresql://postgres:your_password@localhost:5432/price_check`
   in `.env`, then run `npm run migrate`.
-- There is no persistence, job queue, or streaming progress. A request processes
-  pages serially; large pages may require many model calls. Hosting must support
-  Chrome and requests long enough for the extraction to finish.
-- The latest implementation has not been tested end to end. Automated tests were
-  paused at the user's request.
+- After a successful Amazon check, create an alert with `POST /api/alerts` using
+  `productUrl`, `postalCode`, `kind` (`email` or `webhook`), `destination`, and
+  an optional numeric `thresholdPrice`. Read subscriptions with the same query
+  parameters via `GET /api/alerts`. Read the last 100 observations with
+  `GET /api/history?productUrl=...&postalCode=...`.
+- General extraction requests process pages serially; large pages may require many
+  model calls. Hosting must support Chrome and requests long enough for extraction.
